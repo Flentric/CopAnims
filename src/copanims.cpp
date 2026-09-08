@@ -314,7 +314,9 @@ namespace
     constexpr uint32_t kWeaponFlags   = 0x20;    // CWeaponInfo -> flags
 
     // WeaponInfo.xml flags, CAN_AIM = bit 0.
+    constexpr uint32_t kFlagGun       = 0x20;      // GUN
     constexpr uint32_t kFlagHeavy     = 0x80;      // HEAVY
+    constexpr uint32_t kFlag2Handed   = 0x1000;    // 2HANDED
     constexpr uint32_t kFlagHeavyRifle = 0x400000; // HEAVY_WEAPON_USES_RIFLE_ANIMS
 
     // Blender association walk. The first three were verified byte-identical on
@@ -607,18 +609,45 @@ namespace
     // engine fell back to move_rifle every frame, and the launcher branch was
     // never reached. This asks the question directly and then holds the
     // dictionary resident itself.
-    bool WantsRpgPose(uint8_t *ped)
+    // The weapon's flags, or 0 if there is nothing in hand.
+    uint32_t WeaponFlags(uint8_t *ped)
     {
         if (!gWeaponSlot || !gWeaponInfo)
-            return false;
+            return 0;
         void *slot = gWeaponSlot(ped + kPedWeapons, nullptr);
         if (!slot)
-            return false;
+            return 0;
         const int type = *reinterpret_cast<int *>(static_cast<uint8_t *>(slot) + kSlotWeaponType);
         uint8_t *info = gWeaponInfo(type);
-        if (!info)
-            return false;
-        const uint32_t f = *reinterpret_cast<uint32_t *>(info + kWeaponFlags);
+        return info ? *reinterpret_cast<uint32_t *>(info + kWeaponFlags) : 0;
+    }
+
+    // Heavy weapons whose own data says they carry like a rifle.
+    //
+    // chooseUpperCombatAnim throws out everything in the HEAVY inventory slot
+    // before it ever looks at this flag, so the grenade launcher, the minigun
+    // and the flamethrower get no pose from it - and they are not launchers
+    // either, so the move_rpg fallback refuses them too. They fall clean
+    // between the two and end up carrying nothing, which with KeepWalkstyle on
+    // means the rifle walk is taken away and nothing put in its place: arms
+    // down. HEAVY_WEAPON_USES_RIFLE_ANIMS is the game stating which family
+    // they belong to, so they get SWAT_RIFLE like any other two-hander.
+    bool WantsHeavyRiflePose(uint8_t *ped)
+    {
+        const uint32_t f = WeaponFlags(ped);
+        return (f & kFlagGun) && (f & kFlag2Handed) &&
+               (f & kFlagHeavy) && (f & kFlagHeavyRifle);
+    }
+
+    bool IsDuckedGroup(int g)
+    {
+        return g == kMoveCrouch || g == kMoveCrouchRifle || g == kMoveCrouchRpg ||
+               g == kMoveCrouchTrans || g == kMoveCrouchTransA;
+    }
+
+    bool WantsRpgPose(uint8_t *ped)
+    {
+        const uint32_t f = WeaponFlags(ped);
         return (f & kFlagHeavy) != 0 && (f & kFlagHeavyRifle) == 0;
     }
 
@@ -1144,6 +1173,18 @@ namespace
         // and gun@cops has no launcher pose. They get "Idle" from their own
         // movement set instead, which is the shouldered-launcher stance, layered
         // the same way over whatever walkstyle the ped has.
+        // Heavy weapons that carry like a rifle - the grenade launcher, the
+        // minigun, the flamethrower. The engine's chooser will not give these
+        // a pose, but their own flags say they use the rifle animations, so
+        // they get the ordinary two-handed one. Straight out of gun@cops, so
+        // NPCs are welcome to it as well.
+        if (!wanted && gPartial && gActive && WantsHeavyRiflePose(ped))
+        {
+            group  = kGroupGunCops;
+            anim   = IsDuckedGroup(moveGroup) ? kAnimSwatCrouch : kAnimSwatRifle;
+            wanted = true;
+        }
+
         // Launchers are the player's alone. An NPC pose comes out of gun@cops
         // and nowhere else, which is what lets every NPC share one streaming
         // request no matter how many of them are armed.

@@ -27,8 +27,15 @@ mod **calls it** rather than reimplementing it. Its whole rule is the `2HANDED` 
 `WeaponInfo.xml`: set it and the weapon gets the rifle pose, clear it and it gets the
 pistol pose. Add a weapon, flag it, and it works here with no code change.
 
-Rocket launchers are the exception. They're slot `HEAVY`, so that function refuses them and
-`gun@cops` has no launcher animation. `Rpg = 1` gives them a pose anyway — `RpgPose` names
+Heavy weapons are the exception, and they split two ways. `chooseUpperCombatAnim` throws out
+everything in the `HEAVY` inventory slot before it looks at any flag, so none of them get a
+pose from it.
+
+Those whose data sets `HEAVY_WEAPON_USES_RIFLE_ANIMS` — the grenade launcher, the minigun,
+the flamethrower — are the game telling you which family they belong to, so they get
+`SWAT_RIFLE` like any other two-hander.
+
+That leaves the actual launchers, which have no `gun@cops` animation at all. `Rpg = 1` gives them a pose anyway — `RpgPose` names
 which one, from `gun@cops` or from any other animation set (`move_rpg:Idle`). If the pose
 can't play, the vanilla `move_rpg` walk stays rather than leaving you with a launcher and
 no animation at all.
