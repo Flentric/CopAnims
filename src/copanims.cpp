@@ -1190,15 +1190,19 @@ namespace
         // on its own at a stand or a walk, while reading correctly at pace. So
         // the pose follows the gait rather than the seed, and each pace is
         // configured on its own.
+        // What THIS pace asks for. Kept in scope: the "already up" test below
+        // needs it too, and it is the pace being run right now that decides
+        // whether the pose in play is the right one - not the standing key.
+        int  poseForGait    = kPoseVanilla;
         bool poseOffThisGait = false;
         if (wanted && !rpg && (anim == kAnimPistolA || anim == kAnimPistolB))
         {
-            const int want = gait == kSprinting ? gPistolPoseSprint
-                           : gait == kJogging   ? gPistolPoseJog
-                                                : gPistolPose;
-            if (want >= 0)
-                anim = want;
-            else if (want == kPoseNone)
+            poseForGait = gait == kSprinting ? gPistolPoseSprint
+                        : gait == kJogging   ? gPistolPoseJog
+                                             : gPistolPose;
+            if (poseForGait >= 0)
+                anim = poseForGait;
+            else if (poseForGait == kPoseNone)
                 poseOffThisGait = true;
         }
 
@@ -1287,10 +1291,17 @@ namespace
             // came up as the wrong variant is swapped out. Left on the engine's
             // coin flip the two are interchangeable, and swapping between them
             // would be churn for no visible difference.
+            //
+            // Two things this must NOT be spelled as `gPistolPose < 0`. It is
+            // the pose THIS PACE asks for that decides, or a pace configured
+            // differently from the standing one never gets its own variant -
+            // and since "none" is negative too, that spelling also made a
+            // single `PistolPose = none` freeze every other pace on whichever
+            // variant happened to come up first.
             const bool oursOneHanded =
                 p.oursAnim != kAnimSwatRifle && p.oursAnim != kAnimSwatCrouch;
             if (p.oursAnim == anim ||
-                (gPistolPose < 0 && oneHanded && oursOneHanded))
+                (poseForGait == kPoseVanilla && oneHanded && oursOneHanded))
                 return;
         }
 
