@@ -436,6 +436,7 @@ namespace
     bool  gOnlyWhileMoving  = true;
     bool  gStopWhenBusy     = true;
     bool  gStopWhenScripted = true;
+    bool  gScriptedWas      = false;
     bool  gIncludeCrouch    = true;
     bool  gOneHanded        = true;   // pistols and SMGs get PISTOL_PARTIAL_A/B
     bool  gRpg              = true;   // rocket launchers pose from move_rpg
@@ -800,17 +801,35 @@ namespace
         if (!intel)
             return false;
 
+        int where = -1;
         if (gFindTask && gFindTask(intel, nullptr, gScriptTask))
-            return true;
-
-        if (gFindSubTask)
+        {
+            where = 0;
+        }
+        else if (gFindSubTask)
         {
             uint8_t *tasks = intel + gTaskMgr;
-            for (int slot = kSecondaryFirst; slot <= kSecondaryLast; slot++)
+            for (int slot = kSecondaryFirst; slot <= kSecondaryLast && where < 0; slot++)
                 if (gFindSubTask(tasks, nullptr, slot, gScriptTask))
-                    return true;
+                    where = slot;
         }
-        return false;
+
+        // Traced on the edge only. This is the line that says whether an
+        // animation the player is having trouble with is a scripted one at all
+        // - an ambient interaction that never prints here is not being played
+        // by TASK_PLAY_ANIM, and this gate is not what is stopping it.
+        if (gTrace && (where >= 0) != gScriptedWas)
+        {
+            gScriptedWas = where >= 0;
+            if (where == 0)
+                TACE_TRACE("[copanims] scripted animation started (primary/move task)");
+            else if (where > 0)
+                TACE_TRACE("[copanims] scripted animation started (secondary slot %d)",
+                           where - kSecondaryFirst);
+            else
+                TACE_TRACE("[copanims] scripted animation ended");
+        }
+        return where >= 0;
     }
 
     struct Playing
@@ -852,7 +871,15 @@ namespace
                 // Ours is identified by group AND channel: the RPG pose comes
                 // from a movement set, and only the copy this code started sits
                 // on the action channel.
-                if (g == ourGroup && t == kTypeAction)
+                //
+                // ourGroup < 0 means there is no pose of ours to find, and it
+                // must NOT be used as a wildcard. An animation played from a
+                // streamed dictionary by name - which is what every scripted
+                // animation is - belongs to no registered anim group and so
+                // carries group -1 itself. Matching it would hand the game's
+                // own animation to CancelPose, which blends it straight back
+                // out again. See IsLocomotionGroup: groups really can be < 0.
+                if (ourGroup >= 0 && g == ourGroup && t == kTypeAction)
                 {
                     p.ours     = assoc;
                     p.oursAnim = *reinterpret_cast<int *>(assoc + kAssocAnimId);
@@ -937,6 +964,11 @@ namespace
     DWORD gOpenSince  = 0;
     DWORD gLastStart  = 0;
     bool  gHadPose    = false;
+    // The group the pose that is currently up was started with. Kept because
+    // the reason for playing a pose disappears before the pose does: holster
+    // the weapon and the chooser stops naming a group, but the association is
+    // still playing and still has to be found to be blended out.
+    int   gPoseGroup  = -1;
     bool  gKeyWasDown = false;
 
     void Tick(uint8_t *ped)
@@ -985,7 +1017,10 @@ namespace
             }
         }
 
-        Playing p = ScanBlender(ped, group);
+        // What to look for in the blender: the pose we are about to want, or -
+        // when we no longer want one - the pose we last started, so it can be
+        // taken down. Never -1 with the meaning "anything".
+        Playing p = ScanBlender(ped, wanted ? group : gPoseGroup);
 
         // If nothing on the moveset channel is playing, fall back to the group
         // the move blend is set to - the answer is the same, it just cannot go
@@ -1048,6 +1083,7 @@ namespace
             gOpenSince = 0;
             gHadPose   = false;
             gRpgPoseUp = false;
+            gPoseGroup = -1;
             // Traced whether or not there was anything to cancel: a gate that
             // never opens is otherwise completely silent, and the listing below
             // is what says which group the player is actually animating from.
@@ -1073,6 +1109,7 @@ namespace
         {
             gHadPose   = true;
             gRpgPoseUp = rpg;
+            gPoseGroup = group;
             // With a pose forced, an exact match is required so a pistol that
             // came up as the wrong variant is swapped out. Left on the engine's
             // coin flip the two are interchangeable, and swapping between them
@@ -1111,6 +1148,7 @@ namespace
         }
         gLastStart = now;
         gHadPose   = true;
+        gPoseGroup = group;
 
         if (!reported)
         {
