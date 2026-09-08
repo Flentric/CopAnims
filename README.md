@@ -51,6 +51,20 @@ Two differences from the player's path, both deliberate:
   else, which is what lets every NPC share a single streaming request no matter how many are
   armed.
 
+### Multiplayer
+
+`Peds` covers other players too, because a remote player is an ordinary ped on your client.
+If everyone in the session has the mod, everyone sees everyone carrying guns the cop way.
+
+Nothing is sent over the network to make that happen and nothing needs to be. Each client
+works the pose out for itself from the weapon in hand, using the engine's own rule — so the
+same weapon lands on the same pose on every machine, without a packet. What has to match is
+the `2HANDED` flag in `WeaponInfo.xml`: a client running edited weapon data will see its own
+answer, not yours.
+
+A player without the mod just sees vanilla carry. This only ever plays animations, so there
+is nothing for them to be out of step *with* — no state, no positions, no hit registration.
+
 Per-ped state lives in a fixed table sized for 96 simultaneous posing peds, walked from the
 game's own per-ped update and never allocating. Peds beyond that simply go without, and
 entries are reaped when a ped stops ticking — which is the only signal there is that it died
