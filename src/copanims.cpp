@@ -110,6 +110,13 @@ namespace
     constexpr int kAnimSwatRifle   = 235;    // 0xEB  SWAT_RIFLE       - the 2HANDED pose
     constexpr int kAnimSwatCrouch  = 236;    // 0xEC  SWAT_RIFLE_CROUCH
 
+    // What a pistol pose key can say beyond naming an animation.
+    //   kPoseVanilla  leave the engine's own per-ped coin flip alone
+    //   kPoseNone     no cop carry at this pace at all - the vanilla armed
+    //                 animations come back, walkstyle included
+    constexpr int kPoseVanilla = -1;
+    constexpr int kPoseNone    = -2;
+
     // ---- signatures ------------------------------------------------------
 
     // CPedMoveBlend::setMoveAnimGroup(int group):
@@ -443,6 +450,9 @@ namespace
         // all, which is worse than vanilla.
         bool     rpgPoseUp = false;
         bool     stream    = false;     // this ped is holding the NPC request
+        // The one-handed pose is set to "none" at this ped's current pace, so
+        // the walkstyle has to go back to vanilla along with the pose.
+        bool     standDown = false;
         bool     scripted  = false;     // last answer, for tracing the edge
     };
 
@@ -823,7 +833,10 @@ namespace
             return kAnimPistolA;
         if (pick == "B" || pick == "b")
             return kAnimPistolB;
-        return -1;
+        if (pick == "none" || pick == "None" || pick == "NONE" ||
+            pick == "off"  || pick == "Off"  || pick == "OFF")
+            return kPoseNone;
+        return kPoseVanilla;
     }
 
     const char *GaitName(Gait g)
@@ -1177,6 +1190,7 @@ namespace
         // on its own at a stand or a walk, while reading correctly at pace. So
         // the pose follows the gait rather than the seed, and each pace is
         // configured on its own.
+        bool poseOffThisGait = false;
         if (wanted && !rpg && (anim == kAnimPistolA || anim == kAnimPistolB))
         {
             const int want = gait == kSprinting ? gPistolPoseSprint
@@ -1184,7 +1198,21 @@ namespace
                                                 : gPistolPose;
             if (want >= 0)
                 anim = want;
+            else if (want == kPoseNone)
+                poseOffThisGait = true;
         }
+
+        // "none" at this pace means the vanilla armed animations come back
+        // WHOLE - the walkstyle as well as the pose. Dropping only the pose
+        // would leave a pistol carried with the arms down, which is not what
+        // anybody means by falling back to the default animations.
+        //
+        // Read one frame later by CopAnims_MoveGroup: the engine asks for the
+        // movement group inside the same call this tick wraps, so the answer
+        // it uses is the one worked out on the previous frame. A pace change
+        // takes a frame to show, which is far less visible than the walkstyle
+        // being wrong.
+        st.standDown = poseOffThisGait;
 
         // One-handed weapons can be left out: the two-handed pose is the one
         // most of the value is in, and this keeps the pistols out of the way
@@ -1198,6 +1226,8 @@ namespace
             gate = "no cop pose for the weapon in hand";
         else if (oneHanded && !gOneHanded)
             gate = "one-handed weapon, and OneHanded is off";
+        else if (poseOffThisGait)
+            gate = "the one-handed pose is set to none at this pace";
         else if (gStopWhenBusy && p.busy)
             gate = "another animation owns the upper body";
         else if (gStopWhenScripted && ScriptedAnimActive(ped, isPlayer))
@@ -1378,6 +1408,11 @@ extern "C" int __cdecl CopAnims_MoveGroup(void *ped, int group)
     // This cannot deadlock the way the launcher pose once did: move_rifle is
     // itself a locomotion set, so the pose is free to start while the ped is
     // still walking with it.
+    // "none" at this pace: hand back exactly what the engine asked for, so
+    // the vanilla armed walk comes back with the vanilla armed carry.
+    if (st && st->standDown)
+        return group;
+
     const bool posed = st && st->hadPose;
     if (!isPlayer && !posed)
         return group;
@@ -1738,6 +1773,7 @@ void CopAnims_Init()
         auto poseName = [](int a) {
             return a == kAnimPistolA ? "PISTOL_PARTIAL_A"
                  : a == kAnimPistolB ? "PISTOL_PARTIAL_B"
+                 : a == kPoseNone    ? "no cop carry - vanilla"
                                      : "whichever pose the engine picks";
         };
         TACE_INFO("[copanims] one-handed: %s standing or walking, %s jogging, %s sprinting",

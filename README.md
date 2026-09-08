@@ -108,7 +108,12 @@ cancels itself for aiming, jumping, melee, swimming and everything else:
 `ToggleKey` turns the whole effect on and off in game. `Enabled = 0` is the real off
 switch — it installs no hooks at all.
 
-`PistolPose` / `PistolPoseJogging` / `PistolPoseSprinting` each take `A`, `B` or `vanilla`.
+`PistolPose` / `PistolPoseJogging` / `PistolPoseSprinting` each take `A`, `B`, `vanilla` or
+`none`. `none` turns the cop carry off at that pace only — **the walkstyle goes back with the
+pose**, so what you get is the stock armed animations rather than a pistol carried with the
+arms down. Set the paces you like and leave the rest vanilla:
+`PistolPose = B`, `PistolPoseJogging = none` keeps the cop carry at a stand and a walk and
+hands jogging back to the game.
 The defaults are deliberate: **`PISTOL_PARTIAL_A` is authored for jogging and sprinting**
 and judders on its own at a stand — that's a fault in the stock animation, not in this mod,
 and it's why half the cops in vanilla judder standing around. `B` is the clean
