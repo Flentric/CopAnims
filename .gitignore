@@ -1,0 +1,10 @@
+/.vs
+*.obj
+*.recipe
+*.log
+*.ipdb
+*.iobj
+/build/Release/CopAnims.tlog
+build/Release/vc*.pdb
+*.user
+*.filters
