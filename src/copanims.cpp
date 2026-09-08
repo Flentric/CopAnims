@@ -395,12 +395,6 @@ namespace
     void *gChooseMoveGroup = nullptr;
     uint8_t **gAnimGroups = nullptr;   // &ms_animGroups.pData
 
-    // True while the launcher pose is actually up. The walkstyle is only taken
-    // off move_rpg once it is - otherwise a launcher whose pose cannot play
-    // leaves the player carrying it with no carry animation at all, which is
-    // worse than vanilla.
-    bool gRpgPoseUp = false;
-
     using ChooseAnimFn = int(__cdecl *)(void *ped, int *group, int *anim);
     using PlayAnimFn   = void *(__fastcall *)(void *blender, void *edx, int group, int anim,
                                               float blend, int fallbackGroup);
@@ -425,11 +419,91 @@ namespace
     uint32_t      gTaskMgr     = 0;    // CPedIntelligence -> CTaskManager
     int           gScriptTask  = -1;   // CTaskSimpleRunNamedAnim's task type
 
+    // Everything the pose logic remembers between frames, per ped.
+    //
+    // It used to be a handful of globals, which was right while only the
+    // player could have a pose. With NPCs in play there can be dozens at once,
+    // each with its own debounce clock and its own pose to take down again.
+    //
+    // A flat table rather than a map: this is walked from the game's own
+    // per-ped update, so it must not allocate. Entries are found by ped
+    // pointer and aged out when a ped stops ticking - which is what happens
+    // when it dies, streams out, or the pool hands its slot to someone else.
+    struct PedPose
+    {
+        uint8_t *ped       = nullptr;   // null = free slot
+        DWORD    seen      = 0;
+        DWORD    openSince = 0;
+        DWORD    lastStart = 0;
+        int      poseGroup = -1;
+        bool     hadPose   = false;
+        // True while the launcher pose is actually up. The walkstyle is only
+        // taken off move_rpg once it is - otherwise a launcher whose pose
+        // cannot play leaves the player carrying it with no carry animation at
+        // all, which is worse than vanilla.
+        bool     rpgPoseUp = false;
+        bool     stream    = false;     // this ped is holding the NPC request
+        bool     scripted  = false;     // last answer, for tracing the edge
+    };
+
+    constexpr size_t kMaxPosedPeds = 96;
+    constexpr DWORD  kPedForgetMs  = 1000;   // not ticked for this long = gone
+
+    PedPose gPedPoses[kMaxPosedPeds];
+
+    // Declared here, defined below with the streaming block it belongs to: a
+    // ped that stops ticking has to give its share of the request back.
+    void ForgetPed(PedPose &e);
+
+    // Find this ped's entry, optionally claiming a free one.
+    //
+    // The whole table is walked every time rather than returning early on a
+    // hit, because this is also where peds that have stopped ticking are
+    // reaped - and a ped near the front of the table would otherwise keep
+    // everything behind it alive forever. A ped stops ticking when it dies,
+    // streams out, or the pool hands its slot to somebody else; none of those
+    // announce themselves, so ageing out is the only signal there is.
+    PedPose *PoseFor(uint8_t *ped, DWORD now, bool create)
+    {
+        PedPose *mine = nullptr;
+        PedPose *free = nullptr;
+
+        for (PedPose &e : gPedPoses)
+        {
+            if (e.ped == ped)
+            {
+                e.seen = now;
+                mine   = &e;
+                continue;
+            }
+            if (e.ped && now - e.seen > kPedForgetMs)
+                ForgetPed(e);
+            if (!e.ped && !free)
+                free = &e;
+        }
+
+        if (mine || !create || !free)
+            return mine;                // no free slot: this ped goes without
+
+        *free = PedPose{};
+        free->ped  = ped;
+        free->seen = now;
+        return free;
+    }
+
     // The task keeps one of these per instance; one shared block is enough for
     // a single ped, and it holds the streaming reference for as long as the
     // player is armed.
     uint8_t gStream[12]{};
     bool    gStreamHeld = false;   // gun@cops requested, and to be given back
+
+    // NPCs only ever pose out of gun@cops, so one shared request covers all of
+    // them however many there are; the player keeps its own block because the
+    // launcher pose can put it on a different animation set entirely. Counted
+    // rather than flagged: the last ped to stop posing gives the reference
+    // back, not the first.
+    uint8_t gPedStream[12]{};
+    int     gPedStreamUsers = 0;
 
     bool  gKeepWalkstyle    = false;
     bool  gPartial          = false;
@@ -440,6 +514,7 @@ namespace
     bool  gIncludeCrouch    = true;
     bool  gOneHanded        = true;   // pistols and SMGs get PISTOL_PARTIAL_A/B
     bool  gRpg              = true;   // rocket launchers pose from move_rpg
+    bool  gPeds             = true;   // NPCs carry their guns the same way
     bool  gActive           = true;   // the live on/off state the hotkey drives
     int   gToggleKey        = 0;      // 0 = no hotkey
     int   gPistolPose       = kAnimPistolB;   // standing or walking; -1 = engine's coin flip
@@ -792,7 +867,7 @@ namespace
     // walked with findPrimarySubTaskByID, which indexes every slot off the same
     // base - that is where TASK_PLAY_ANIM_SECONDARY_UPPER_BODY puts its task,
     // and it is the case the primary sweep alone would miss.
-    bool ScriptedAnimActive(uint8_t *ped)
+    bool ScriptedAnimActive(uint8_t *ped, bool trace)
     {
         if (gScriptTask < 0)
             return false;
@@ -818,7 +893,7 @@ namespace
         // animation the player is having trouble with is a scripted one at all
         // - an ambient interaction that never prints here is not being played
         // by TASK_PLAY_ANIM, and this gate is not what is stopping it.
-        if (gTrace && (where >= 0) != gScriptedWas)
+        if (gTrace && trace && (where >= 0) != gScriptedWas)
         {
             gScriptedWas = where >= 0;
             if (where == 0)
@@ -942,6 +1017,58 @@ namespace
         }
     }
 
+    // The same, for the block the NPCs share. Held while any of them is posing.
+    bool HoldGroup(bool isPlayer, PedPose &st, int group)
+    {
+        if (isPlayer)
+        {
+            gStreamHeld = true;
+            return gAnimReq(gStream, nullptr, group) != 0;
+        }
+        if (!st.stream)
+        {
+            st.stream = true;
+            gPedStreamUsers++;
+        }
+        return gAnimReq(gPedStream, nullptr, group) != 0;
+    }
+
+    // A ped that will never tick again. Its share of the shared request has to
+    // come back, or the count never reaches zero and gun@cops stays resident
+    // for the rest of the session.
+    void ForgetPed(PedPose &e)
+    {
+        if (e.stream)
+        {
+            e.stream = false;
+            if (--gPedStreamUsers <= 0)
+            {
+                gPedStreamUsers = 0;
+                if (gAnimReq)
+                    gAnimReq(gPedStream, nullptr, -1);
+            }
+        }
+        e.ped = nullptr;
+    }
+
+    void DropGroup(bool isPlayer, PedPose &st)
+    {
+        if (isPlayer)
+        {
+            ReleaseGroup();
+            return;
+        }
+        if (!st.stream)
+            return;
+        st.stream = false;
+        if (--gPedStreamUsers <= 0)
+        {
+            gPedStreamUsers = 0;
+            if (gAnimReq)
+                gAnimReq(gPedStream, nullptr, -1);
+        }
+    }
+
     // Runs once per ped per frame, on the game thread, right after the engine
     // has chosen that ped's movement group. Everything but the player leaves
     // immediately.
@@ -961,26 +1088,26 @@ namespace
         }
     }
 
-    DWORD gOpenSince  = 0;
-    DWORD gLastStart  = 0;
-    bool  gHadPose    = false;
-    // The group the pose that is currently up was started with. Kept because
-    // the reason for playing a pose disappears before the pose does: holster
-    // the weapon and the chooser stops naming a group, but the association is
-    // still playing and still has to be found to be blended out.
-    int   gPoseGroup  = -1;
     bool  gKeyWasDown = false;
 
     void Tick(uint8_t *ped)
     {
         static bool reported = false;
+        static bool reportedPeds = false;
         static const char *lastGate = nullptr;
 
-        if (!ped || ped != PlayerPed())
+        if (!ped)
             return;
 
-        // Once per frame, now that this is known to be the player.
-        if (gToggleKey)
+        // This runs from the game's own per-ped update, so it is called for
+        // every ped in the world every frame. Everything below has to stay
+        // cheap for the ones that will never pose.
+        const bool isPlayer = (ped == PlayerPed());
+        if (!isPlayer && !gPeds)
+            return;
+
+        // Once per frame, and only for the player.
+        if (isPlayer && gToggleKey)
         {
             const bool down = (GetAsyncKeyState(gToggleKey) & 0x8000) != 0;
             if (down && !gKeyWasDown)
@@ -1004,8 +1131,11 @@ namespace
         // and gun@cops has no launcher pose. They get "Idle" from their own
         // movement set instead, which is the shouldered-launcher stance, layered
         // the same way over whatever walkstyle the ped has.
+        // Launchers are the player's alone. An NPC pose comes out of gun@cops
+        // and nowhere else, which is what lets every NPC share one streaming
+        // request no matter how many of them are armed.
         bool rpg = false;
-        if (!wanted && gPartial && gActive && gRpg && WantsRpgPose(ped))
+        if (!wanted && isPlayer && gPartial && gActive && gRpg && WantsRpgPose(ped))
         {
             Resolve(gRpgPose);
             if (gRpgPose.ok)
@@ -1017,10 +1147,20 @@ namespace
             }
         }
 
+        const DWORD now = GetTickCount();
+
+        // Only now is it worth a table slot. The overwhelming majority of peds
+        // are unarmed, want no pose and have never had one, and they get out
+        // here without touching it.
+        PedPose *state = PoseFor(ped, now, wanted);
+        if (!state)
+            return;
+        PedPose &st = *state;
+
         // What to look for in the blender: the pose we are about to want, or -
         // when we no longer want one - the pose we last started, so it can be
         // taken down. Never -1 with the meaning "anything".
-        Playing p = ScanBlender(ped, wanted ? group : gPoseGroup);
+        Playing p = ScanBlender(ped, wanted ? group : st.poseGroup);
 
         // If nothing on the moveset channel is playing, fall back to the group
         // the move blend is set to - the answer is the same, it just cannot go
@@ -1060,45 +1200,48 @@ namespace
             gate = "one-handed weapon, and OneHanded is off";
         else if (gStopWhenBusy && p.busy)
             gate = "another animation owns the upper body";
-        else if (gStopWhenScripted && ScriptedAnimActive(ped))
+        else if (gStopWhenScripted && ScriptedAnimActive(ped, isPlayer))
             gate = "a script is animating the player";
         else if (gOnlyWhileMoving && !IsLocomotionGroup(moveset, defaultGroup))
             gate = "not on a walk/run/sprint moveset";
-
-        const DWORD now = GetTickCount();
 
         if (gate)
         {
             // Something took the channel out from under a pose that was up.
             // Worth saying so by name: that is the animation to look at if the
             // pose is fighting for the body rather than simply standing down.
-            if (gTrace && gHadPose && p.busy)
+            if (gTrace && isPlayer && st.hadPose && p.busy)
                 TACE_TRACE("[copanims] pose displaced by group 0x%02X", p.busyGroup);
 
-            if (p.ours || gStreamHeld)
+            if (p.ours || st.stream || (isPlayer && gStreamHeld))
             {
                 CancelPose(p);
-                ReleaseGroup();
+                DropGroup(isPlayer, st);
             }
-            gOpenSince = 0;
-            gHadPose   = false;
-            gRpgPoseUp = false;
-            gPoseGroup = -1;
+            st.openSince = 0;
+            st.hadPose   = false;
+            st.rpgPoseUp = false;
+            st.poseGroup = -1;
+            // An entry that is holding nothing is worth nothing. Freeing it
+            // here keeps the table for peds that are actually posing.
+            if (!wanted)
+                ForgetPed(st);
             // Traced whether or not there was anything to cancel: a gate that
             // never opens is otherwise completely silent, and the listing below
             // is what says which group the player is actually animating from.
-            if (gTrace && gate != lastGate)
+            if (gTrace && isPlayer && gate != lastGate)
             {
                 TACE_TRACE("[copanims] pose off - %s (moveset 0x%02X)", gate, moveset);
                 TracePlaying(ped);
             }
-            lastGate = gate;
+            if (isPlayer)
+                lastGate = gate;
             return;
         }
-        lastGate = nullptr;
+        if (isPlayer)
+            lastGate = nullptr;
 
-        gStreamHeld = true;
-        if (!gAnimReq(gStream, nullptr, group))
+        if (!HoldGroup(isPlayer, st, group))
             return;             // gun@cops.wad still streaming in
 
         // Already up and right for the stance. The two pistol variants are the
@@ -1107,9 +1250,9 @@ namespace
         // same-channel displacement rather than being cancelled first.
         if (p.ours)
         {
-            gHadPose   = true;
-            gRpgPoseUp = rpg;
-            gPoseGroup = group;
+            st.hadPose   = true;
+            st.rpgPoseUp = rpg;
+            st.poseGroup = group;
             // With a pose forced, an exact match is required so a pistol that
             // came up as the wrong variant is swapped out. Left on the engine's
             // coin flip the two are interchangeable, and swapping between them
@@ -1124,11 +1267,11 @@ namespace
         // Debounce and rate-limit. If something else is contending for the
         // channel, backing off leaves the pose simply absent instead of
         // strobing on and off once a frame.
-        if (gOpenSince == 0)
-            gOpenSince = now;
-        if (!p.ours && now - gOpenSince < static_cast<DWORD>(gStartDelayMs))
+        if (st.openSince == 0)
+            st.openSince = now;
+        if (!p.ours && now - st.openSince < static_cast<DWORD>(gStartDelayMs))
             return;
-        if (now - gLastStart < static_cast<DWORD>(gRetryDelayMs))
+        if (now - st.lastStart < static_cast<DWORD>(gRetryDelayMs))
             return;
 
         uint8_t *blender = *reinterpret_cast<uint8_t **>(ped + kPedBlender);
@@ -1137,26 +1280,31 @@ namespace
 
         if (rpg)
         {
-            gRpgPoseUp = PlayPose(blender, gRpgPose) != nullptr;
+            st.rpgPoseUp = PlayPose(blender, gRpgPose) != nullptr;
             if (gTrace)
                 TACE_TRACE("[copanims] launcher pose %s: %s", gRpgPose.text.c_str(),
-                           gRpgPoseUp ? "started" : "FAILED - dictionary not ready?");
+                           st.rpgPoseUp ? "started" : "FAILED - dictionary not ready?");
         }
         else
         {
             gPlayAnim(blender, nullptr, group, anim, gBlend, -1);
         }
-        gLastStart = now;
-        gHadPose   = true;
-        gPoseGroup = group;
+        st.lastStart = now;
+        st.hadPose   = true;
+        st.poseGroup = group;
 
-        if (!reported)
+        if (isPlayer && !reported)
         {
             reported = true;
             TACE_OK("[copanims] player is using the cop weapon animations "
                     "(group 0x%02X, first pose id %d)", group, anim);
         }
-        else if (gTrace)
+        else if (!isPlayer && !reportedPeds)
+        {
+            reportedPeds = true;
+            TACE_OK("[copanims] NPCs are using the cop weapon animations too");
+        }
+        else if (gTrace && isPlayer)
         {
             TACE_TRACE("[copanims] pose on - id %d (moveset 0x%02X, move anim %d, %s)",
                        anim, moveset, p.moveAnim, GaitName(gait));
@@ -1209,10 +1357,29 @@ namespace
 // sees the vanilla value.
 extern "C" int __cdecl CopAnims_MoveGroup(void *ped, int group)
 {
-    if (!gActive || !ped || ped != PlayerPed())
+    if (!gActive || !ped || !gKeepWalkstyle)
         return group;
 
-    if (!gKeepWalkstyle)
+    const bool isPlayer = (ped == PlayerPed());
+    if (!isPlayer && !gPeds)
+        return group;
+
+    uint8_t *self = static_cast<uint8_t *>(ped);
+    PedPose *st   = PoseFor(self, GetTickCount(), false);
+
+    // An NPC's walkstyle is only taken off move_rifle once its pose is
+    // actually up. There are dozens of them and any number of reasons a pose
+    // may not start - the table full, the dictionary not in yet, a gate shut -
+    // and stripping the rifle walk without putting the gun pose in its place
+    // leaves a ped carrying a rifle with its arms down, which is worse than
+    // vanilla. The player is left alone: its pose is the tested path, and
+    // waiting would only add a hitch on every draw.
+    //
+    // This cannot deadlock the way the launcher pose once did: move_rifle is
+    // itself a locomotion set, so the pose is free to start while the ped is
+    // still walking with it.
+    const bool posed = st && st->hadPose;
+    if (!isPlayer && !posed)
         return group;
 
     switch (group)
@@ -1221,18 +1388,18 @@ extern "C" int __cdecl CopAnims_MoveGroup(void *ped, int group)
     case kMoveFArmed:
         // Whatever this ped would move with unarmed - move_player for Niko,
         // and the right thing for a custom or multiplayer model too.
-        return *reinterpret_cast<int *>(static_cast<uint8_t *>(ped) + gDefaultGroup);
+        return *reinterpret_cast<int *>(self + gDefaultGroup);
     case kMoveCrouchRifle:
         return kMoveCrouch;
     // Only once the launcher pose is actually up. Until then the vanilla
     // move_rpg walk stays, so a pose that cannot play degrades to vanilla
     // rather than to a launcher carried with no animation at all.
     case kMoveRpg:
-        return (gRpg && gRpgPoseUp)
-                   ? *reinterpret_cast<int *>(static_cast<uint8_t *>(ped) + gDefaultGroup)
+        return (gRpg && st && st->rpgPoseUp)
+                   ? *reinterpret_cast<int *>(self + gDefaultGroup)
                    : group;
     case kMoveCrouchRpg:
-        return (gRpg && gRpgPoseUp) ? kMoveCrouch : group;
+        return (gRpg && st && st->rpgPoseUp) ? kMoveCrouch : group;
     default:
         return group;
     }
@@ -1252,6 +1419,7 @@ void CopAnims_Init()
     gIncludeCrouch    = TaceIniBool("COPANIMS", "IncludeCrouch", true);
     gOneHanded        = TaceIniBool("COPANIMS", "OneHanded", true);
     gRpg              = TaceIniBool("COPANIMS", "Rpg", true);
+    gPeds             = TaceIniBool("COPANIMS", "Peds", true);
     gRpgPose.text     = TaceIniString("COPANIMS", "RpgPose", "SWAT_RIFLE");
     gToggleKey        = ParseKey(TaceIniString("COPANIMS", "ToggleKey"));
     {
@@ -1552,8 +1720,10 @@ void CopAnims_Init()
         return;
     }
 
-    TACE_INFO("[copanims] walkstyle kept: %s, partial gun animation: %s, rocket launchers: %s",
-              gKeepWalkstyle ? "yes" : "no", gPartial ? "yes" : "no", gRpg ? "yes" : "no");
+    TACE_INFO("[copanims] walkstyle kept: %s, partial gun animation: %s, rocket launchers: %s, "
+              "NPCs: %s",
+              gKeepWalkstyle ? "yes" : "no", gPartial ? "yes" : "no", gRpg ? "yes" : "no",
+              gPeds ? "yes" : "no");
     if (gToggleKey)
         TACE_INFO("[copanims] toggle in game with %s",
                   TaceIniString("COPANIMS", "ToggleKey").c_str());

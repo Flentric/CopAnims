@@ -33,6 +33,29 @@ which one, from `gun@cops` or from any other animation set (`move_rpg:Idle`). If
 can't play, the vanilla `move_rpg` walk stays rather than leaving you with a launcher and
 no animation at all.
 
+## NPCs
+
+`Peds = 1` gives every armed NPC the same treatment. Cops already carry guns this way, and
+AI peds get the pose from the engine while they are *in combat* — this is what covers the
+armed pedestrian who is simply walking around, which vanilla puts on `move_rifle` exactly
+like the player.
+
+Two differences from the player's path, both deliberate:
+
+* **An NPC's walkstyle is only taken off `move_rifle` once its pose is actually up.** There
+  can be dozens of them and any number of reasons a pose does not start, and stripping the
+  rifle walk without putting the gun pose in its place leaves a ped holding a rifle with its
+  arms down — worse than vanilla. The player doesn't wait, because that would add a hitch to
+  every draw.
+* **Launchers are the player's alone.** An NPC pose comes out of `gun@cops` and nowhere
+  else, which is what lets every NPC share a single streaming request no matter how many are
+  armed.
+
+Per-ped state lives in a fixed table sized for 96 simultaneous posing peds, walked from the
+game's own per-ped update and never allocating. Peds beyond that simply go without, and
+entries are reaped when a ped stops ticking — which is the only signal there is that it died
+or streamed out.
+
 ## Install
 
 Drop `CopAnims.asi` and `CopAnims.ini` next to `GTAIV.exe`. Needs an ASI loader
