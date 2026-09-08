@@ -61,6 +61,11 @@ cancels itself for aiming, jumping, melee, swimming and everything else:
 * `StopWhenBusy` — drop it while anything else animates the upper body. Turning this off
   causes jitter; the pose and the weapon's own aim/fire/reload animations share one channel
   and fight over it.
+* `StopWhenScripted` — drop it while a mission is animating you. All five of the
+  `TASK_PLAY_ANIM` natives — plain, `_NON_INTERRUPTABLE`, `_UPPER_BODY`,
+  `_SECONDARY_UPPER_BODY` and `_WITH_ADVANCED_FLAGS` — build the same task internally, so
+  one check covers every one of them, plus sequences, cutscene animations and anything
+  another mod plays the same way.
 * `IncludeCrouch` — crouching and its transitions count as moving.
 
 `ToggleKey` turns the whole effect on and off in game. `Enabled = 0` is the real off

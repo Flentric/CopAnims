@@ -236,6 +236,62 @@ namespace
     constexpr uint32_t kGroupAnimData  = 0x44;   // pAnimData, {animId, flags, type}
     constexpr uint32_t kAnimDataStride = 12;
 
+    // ---- scripted animations (TASK_PLAY_ANIM and friends) ----------------
+    //
+    // A mission can put an animation on the player at any moment, and when it
+    // does, the pose must stand down rather than fight it for the upper body.
+    //
+    // All five of the natives Claudio listed - TASK_PLAY_ANIM,
+    // _NON_INTERRUPTABLE, _UPPER_BODY, _SECONDARY_UPPER_BODY and
+    // _WITH_ADVANCED_FLAGS - funnel through one helper (EFLC 0xBF6EB0) which
+    // builds exactly one class: **CTaskSimpleRunNamedAnim**. So there is no
+    // list of natives to keep up with; there is one task type to look for, and
+    // anything else that plays a named animation on the player - a sequence, a
+    // cutscene, another mod - is caught by the same test for free.
+    //
+    // The task type is NOT hardcoded. CTaskSimpleRunNamedAnim's constructor
+    // writes its vftable, virtual index 3 is CTask::GetTaskType (that is the
+    // `call [vtbl+12]` every one of the engine's own task searches makes), and
+    // that method is a two-instruction `mov eax,<id> ; retn`. Reading the id
+    // out of it costs nothing and cannot drift. (It is 0x191 on both 1.0.8.0
+    // and EFLC 1.1.2.0, but the code never assumes that.)
+    const char *kRunNamedAnimCtorSig =
+        "F3 0F 11 86 98 00 00 00 0F 57 C0 0F 2F C1 C7 06 ? ? ? ?";
+    constexpr int kRunNamedVtblOperand = 16;
+    constexpr int kGetTaskTypeSlot     = 3;      // CTask::GetTaskType, vtbl+12
+
+    // CTaskManager::findPrimarySubTaskByID(slot, id) - walks one task slot's
+    // subtask chain asking each task its type:
+    //   mov eax,[esp+4] ; mov esi,[ecx+eax*4] ; ... ; mov edx,[esi]
+    //   mov eax,[edx+0Ch] ; call eax ; cmp eax,ebx ; cmovz edi,esi
+    //   mov esi,[esi+8]                                    <- m_pSubTask
+    const char *kFindSubTaskSig =
+        "8B 44 24 04 56 8B 34 81 57 33 FF 85 F6 74 ? 53 8B 5C 24 14 85 FF 75 ? 8B 16 "
+        "8B 42 0C 8B CE FF D0 3B C3 0F 44 FE";
+
+    // CPedIntelligence::findPrimaryOrMoveSubTaskByID(id) - the engine's own
+    // "does this ped have this task" for the primary and move slots. Also the
+    // source of the CTaskManager offset: `lea esi,[ebx+44h]`.
+    const char *kFindPrimaryOrMoveSig =
+        "53 56 57 8B 7C 24 10 8B D9 57 8D 73 ? 6A 04 8B CE E8";
+    constexpr int kTaskMgrOperand = 12;          // disp8 of the lea
+
+    // ... and one of its call sites, for CPed -> CPedIntelligence:
+    //   mov ecx,[edi+224h] ; push 76Ch ; call findPrimaryOrMoveSubTaskByID
+    // The call target is checked against the resolved function, so the pushed
+    // task id is only an anchor and does not have to mean anything.
+    const char *kPedIntelSig = "8B 8F ? ? ? ? 68 ? ? ? ? E8 ? ? ? ?";
+    constexpr int kPedIntelOperand = 2;          // disp32
+    constexpr int kPedIntelCall    = 11;
+
+    // CTaskManager: 5 primary task slots at +0, then 6 secondary slots at +20 -
+    // findPrimarySubTaskByID indexes them all off the same base, and the
+    // engine's own findTaskWithID walks exactly these two arrays. The
+    // SECONDARY natives land in the second one, so both have to be swept.
+    constexpr int kPrimarySlots   = 5;
+    constexpr int kSecondaryFirst = 5;
+    constexpr int kSecondaryLast  = 10;
+
     // CPlayer::getPlayerPed - the same signature coveranim.cpp uses.
     const char *kPlayerPedSig =
         "8B 44 24 04 85 C0 75 15 A1 ? ? ? ? 83 F8 FF 74 12 8B 04 85 ? ? ? ? 85 C0 74 07 "
@@ -353,6 +409,8 @@ namespace
     using WeaponSlotFn = void *(__fastcall *)(void *weapons, void *edx);
     using WeaponInfoFn = uint8_t *(__cdecl *)(int weaponType);
     using GroupByNameFn = int(__fastcall *)(void *ecx, void *edx, const char *name);
+    using FindSubTaskFn = void *(__fastcall *)(void *taskMgr, void *edx, int slot, int id);
+    using FindTaskFn    = void *(__fastcall *)(void *intel, void *edx, int id);
 
     ChooseAnimFn gChooseAnim = nullptr;
     PlayAnimFn   gPlayAnim   = nullptr;
@@ -361,6 +419,11 @@ namespace
     WeaponSlotFn gWeaponSlot = nullptr;
     WeaponInfoFn gWeaponInfo = nullptr;
     GroupByNameFn gGroupByName = nullptr;
+    FindSubTaskFn gFindSubTask = nullptr;
+    FindTaskFn    gFindTask    = nullptr;
+    uint32_t      gPedIntel    = 0;    // CPed -> CPedIntelligence
+    uint32_t      gTaskMgr     = 0;    // CPedIntelligence -> CTaskManager
+    int           gScriptTask  = -1;   // CTaskSimpleRunNamedAnim's task type
 
     // The task keeps one of these per instance; one shared block is enough for
     // a single ped, and it holds the streaming reference for as long as the
@@ -372,6 +435,7 @@ namespace
     bool  gPartial          = false;
     bool  gOnlyWhileMoving  = true;
     bool  gStopWhenBusy     = true;
+    bool  gStopWhenScripted = true;
     bool  gIncludeCrouch    = true;
     bool  gOneHanded        = true;   // pistols and SMGs get PISTOL_PARTIAL_A/B
     bool  gRpg              = true;   // rocket launchers pose from move_rpg
@@ -715,6 +779,40 @@ namespace
                 g == kMoveCrouchTrans || g == kMoveCrouchTransA);
     }
 
+    // Is a script animating the player right now?
+    //
+    // Asked of the task tree rather than of the blender, because that is where
+    // the answer is unambiguous: a scripted animation comes off an arbitrary
+    // dictionary, so it carries no group or channel this code could recognise,
+    // but the task that plays it is always a CTaskSimpleRunNamedAnim.
+    //
+    // Both task arrays are swept. The primary and move slots go through the
+    // engine's own findPrimaryOrMoveSubTaskByID; the six secondary slots are
+    // walked with findPrimarySubTaskByID, which indexes every slot off the same
+    // base - that is where TASK_PLAY_ANIM_SECONDARY_UPPER_BODY puts its task,
+    // and it is the case the primary sweep alone would miss.
+    bool ScriptedAnimActive(uint8_t *ped)
+    {
+        if (gScriptTask < 0)
+            return false;
+
+        uint8_t *intel = *reinterpret_cast<uint8_t **>(ped + gPedIntel);
+        if (!intel)
+            return false;
+
+        if (gFindTask && gFindTask(intel, nullptr, gScriptTask))
+            return true;
+
+        if (gFindSubTask)
+        {
+            uint8_t *tasks = intel + gTaskMgr;
+            for (int slot = kSecondaryFirst; slot <= kSecondaryLast; slot++)
+                if (gFindSubTask(tasks, nullptr, slot, gScriptTask))
+                    return true;
+        }
+        return false;
+    }
+
     struct Playing
     {
         int      moveset   = -1;     // group of the live moveset (type 0)
@@ -927,6 +1025,8 @@ namespace
             gate = "one-handed weapon, and OneHanded is off";
         else if (gStopWhenBusy && p.busy)
             gate = "another animation owns the upper body";
+        else if (gStopWhenScripted && ScriptedAnimActive(ped))
+            gate = "a script is animating the player";
         else if (gOnlyWhileMoving && !IsLocomotionGroup(moveset, defaultGroup))
             gate = "not on a walk/run/sprint moveset";
 
@@ -1110,6 +1210,7 @@ void CopAnims_Init()
     gPartial         = TaceIniBool("COPANIMS", "Partial", true);
     gOnlyWhileMoving  = TaceIniBool("COPANIMS", "OnlyWhileMoving", true);
     gStopWhenBusy     = TaceIniBool("COPANIMS", "StopWhenBusy", true);
+    gStopWhenScripted = TaceIniBool("COPANIMS", "StopWhenScripted", true);
     gIncludeCrouch    = TaceIniBool("COPANIMS", "IncludeCrouch", true);
     gOneHanded        = TaceIniBool("COPANIMS", "OneHanded", true);
     gRpg              = TaceIniBool("COPANIMS", "Rpg", true);
@@ -1324,6 +1425,78 @@ void CopAnims_Init()
         }
     }
 
+    // Standing down for a scripted animation. Four things to find, and if any
+    // of them is missing the gate is simply dropped - the pose then behaves as
+    // it did before, rather than the feature refusing to load.
+    if (gPartial && gStopWhenScripted)
+    {
+        pattern = find_pattern(kRunNamedAnimCtorSig);
+        if (!pattern.empty())
+        {
+            uint8_t **vtbl = *pattern.get_first<uint8_t **>(kRunNamedVtblOperand);
+            uint8_t  *get   = vtbl ? vtbl[kGetTaskTypeSlot] : nullptr;
+            // mov eax,imm32 / mov al,imm8, then retn. Anything else and this is
+            // not the getter it is supposed to be, so nothing is assumed.
+            if (get && get[0] == 0xB8)
+                gScriptTask = *reinterpret_cast<int *>(get + 1);
+            else if (get && get[0] == 0xB0)
+                gScriptTask = get[1];
+            else
+                TACE_WARN("[copanims] CTaskSimpleRunNamedAnim::GetTaskType is not the "
+                          "constant getter it should be - scripted animations not detected");
+        }
+        else
+        {
+            TACE_WARN("[copanims] CTaskSimpleRunNamedAnim: signature not found - scripted "
+                      "animations not detected");
+        }
+
+        pattern = find_pattern(kFindPrimaryOrMoveSig);
+        if (!pattern.empty())
+        {
+            gFindTask = reinterpret_cast<FindTaskFn>(pattern.get_first(0));
+            gTaskMgr  = *pattern.get_first<uint8_t>(kTaskMgrOperand);
+
+            // CPed -> CPedIntelligence, from any call site that loads it and
+            // then calls the function just resolved. The pushed task id in the
+            // signature is only an anchor: the call target is what identifies
+            // the site, so nothing depends on which id happens to be there.
+            hook::pattern sites(kPedIntelSig);
+            for (size_t i = 0; i < sites.size() && !gPedIntel; i++)
+            {
+                uint8_t *at = sites.get(i).get<uint8_t>(kPedIntelCall);
+                if (at + 5 + *reinterpret_cast<int32_t *>(at + 1) ==
+                    reinterpret_cast<uint8_t *>(gFindTask))
+                    gPedIntel = *sites.get(i).get<uint32_t>(kPedIntelOperand);
+            }
+            if (!gPedIntel)
+                TACE_WARN("[copanims] CPed::m_pPedIntelligence: no call site found - scripted "
+                          "animations not detected");
+        }
+        else
+        {
+            TACE_WARN("[copanims] CPedIntelligence::findPrimaryOrMoveSubTaskByID: signature "
+                      "not found - scripted animations not detected");
+        }
+
+        pattern = find_pattern(kFindSubTaskSig);
+        if (!pattern.empty())
+            gFindSubTask = reinterpret_cast<FindSubTaskFn>(pattern.get_first(0));
+        else
+            TACE_WARN("[copanims] CTaskManager::findPrimarySubTaskByID: signature not found - "
+                      "a scripted animation in a secondary task slot will not be seen");
+
+        if (gScriptTask < 0 || !gPedIntel || !gFindTask)
+        {
+            gStopWhenScripted = false;
+        }
+        else if (gTrace)
+        {
+            TACE_TRACE("[copanims] CTaskSimpleRunNamedAnim is task type 0x%X; intelligence at "
+                       "ped+0x%X, tasks at +0x%X", gScriptTask, gPedIntel, gTaskMgr);
+        }
+    }
+
     // Blending the pose back out again when a gate closes.
     if (gPartial)
     {
@@ -1348,8 +1521,9 @@ void CopAnims_Init()
                   TaceIniString("COPANIMS", "ToggleKey").c_str());
     if (gPartial)
         TACE_INFO("[copanims] pose held only while: on a moveset %s, nothing else "
-                  "animating %s (crouch %s)",
+                  "animating %s, no scripted animation %s (crouch %s)",
                   gOnlyWhileMoving ? "yes" : "no", gStopWhenBusy ? "yes" : "no",
+                  gStopWhenScripted ? "yes" : "no",
                   gIncludeCrouch ? "counts" : "excluded");
     if (gPartial && gOneHanded)
     {
