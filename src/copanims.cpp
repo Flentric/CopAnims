@@ -593,9 +593,9 @@ namespace
         gGaitsReady = true;
 
         if (gTrace)
-            TACE_TRACE("[copanims] of %d movement animations, %d jog and %d sprint",
-                       count, static_cast<int>(gJogAnims.size()),
-                       static_cast<int>(gSprintAnims.size()));
+            LOG_TRACE("[copanims] of %d movement animations, %d jog and %d sprint",
+                      count, static_cast<int>(gJogAnims.size()),
+                      static_cast<int>(gSprintAnims.size()));
     }
 
     // Would the engine put this ped on move_rpg? Its own test, both flags:
@@ -701,7 +701,7 @@ namespace
             return;
         for (int i = 0; i < count; i++)
             if (names[i])
-                TACE_WARN("[copanims]     %s", names[i]);
+                LOG_WARN("[copanims]     %s", names[i]);
     }
 
     void Resolve(PoseRef &r)
@@ -723,32 +723,32 @@ namespace
         {
             if (!gGroupByName)
             {
-                TACE_WARN("[copanims] %s: no way to look up animation set \"%s\"",
-                          r.text.c_str(), set.c_str());
+                LOG_WARN("[copanims] %s: no way to look up animation set \"%s\"",
+                         r.text.c_str(), set.c_str());
                 return;
             }
             groupIndex = gGroupByName(nullptr, nullptr, set.c_str());
             if (groupIndex < 0)
             {
-                TACE_WARN("[copanims] %s: no animation set called \"%s\"",
-                          r.text.c_str(), set.c_str());
+                LOG_WARN("[copanims] %s: no animation set called \"%s\"",
+                         r.text.c_str(), set.c_str());
                 return;
             }
         }
 
         if (!FindAnimInGroup(groupIndex, anim.c_str(), &r.anim, &r.type))
         {
-            TACE_WARN("[copanims] %s: set 0x%02X has no animation called \"%s\". It has:",
-                      r.text.c_str(), groupIndex, anim.c_str());
+            LOG_WARN("[copanims] %s: set 0x%02X has no animation called \"%s\". It has:",
+                     r.text.c_str(), groupIndex, anim.c_str());
             ListGroup(groupIndex);
             return;
         }
 
         r.group = groupIndex;
         r.ok    = true;
-        TACE_INFO("[copanims] launcher pose: %s = set 0x%02X animation %d, channel %d%s",
-                  r.text.c_str(), r.group, r.anim, r.type,
-                  r.type == kTypeAction ? "" : " (moved to the pose channel)");
+        LOG_INFO("[copanims] launcher pose: %s = set 0x%02X animation %d, channel %d%s",
+                 r.text.c_str(), r.group, r.anim, r.type,
+                 r.type == kTypeAction ? "" : " (moved to the pose channel)");
     }
 
     PoseRef gRpgPose;
@@ -856,7 +856,7 @@ namespace
     // "A" / "B" / anything else ("vanilla") - leave the engine's coin flip alone.
     int ReadPose(const char *key, const char *def)
     {
-        const std::string v = TaceIniString("COPANIMS", key, def);
+        const std::string v = IniString("COPANIMS", key, def);
         const std::string pick = v.empty() ? std::string(def) : v;
         if (pick == "A" || pick == "a")
             return kAnimPistolA;
@@ -939,12 +939,12 @@ namespace
         {
             gScriptedWas = where >= 0;
             if (where == 0)
-                TACE_TRACE("[copanims] scripted animation started (primary/move task)");
+                LOG_TRACE("[copanims] scripted animation started (primary/move task)");
             else if (where > 0)
-                TACE_TRACE("[copanims] scripted animation started (secondary slot %d)",
-                           where - kSecondaryFirst);
+                LOG_TRACE("[copanims] scripted animation started (secondary slot %d)",
+                          where - kSecondaryFirst);
             else
-                TACE_TRACE("[copanims] scripted animation ended");
+                LOG_TRACE("[copanims] scripted animation ended");
         }
         return where >= 0;
     }
@@ -1038,12 +1038,12 @@ namespace
             uint8_t *assoc = node + 4;
             if (*reinterpret_cast<uint16_t *>(node + kNodeLive) == 1 &&
                 *reinterpret_cast<uint32_t *>(assoc + kAssocAnimPtr) != 0)
-                TACE_TRACE("[copanims]     group 0x%02X type %d anim %d weight %.2f%s",
-                           *reinterpret_cast<int *>(assoc + kAssocGroup),
-                           *reinterpret_cast<int *>(assoc + kAssocType),
-                           *reinterpret_cast<int *>(assoc + kAssocAnimId),
-                           *reinterpret_cast<float *>(assoc + kAssocWeight),
-                           IsFadingOut(assoc) ? " (fading out)" : "");
+                LOG_TRACE("[copanims]     group 0x%02X type %d anim %d weight %.2f%s",
+                          *reinterpret_cast<int *>(assoc + kAssocGroup),
+                          *reinterpret_cast<int *>(assoc + kAssocType),
+                          *reinterpret_cast<int *>(assoc + kAssocAnimId),
+                          *reinterpret_cast<float *>(assoc + kAssocWeight),
+                          IsFadingOut(assoc) ? " (fading out)" : "");
             node = *reinterpret_cast<uint8_t **>(node + kNodeNext);
         }
     }
@@ -1155,7 +1155,7 @@ namespace
             if (down && !gKeyWasDown)
             {
                 gActive = !gActive;
-                TACE_OK("[copanims] %s", gActive ? "on" : "off");
+                LOG_OK("[copanims] %s", gActive ? "on" : "off");
             }
             gKeyWasDown = down;
         }
@@ -1286,7 +1286,7 @@ namespace
             // Worth saying so by name: that is the animation to look at if the
             // pose is fighting for the body rather than simply standing down.
             if (gTrace && isPlayer && st.hadPose && p.busy)
-                TACE_TRACE("[copanims] pose displaced by group 0x%02X", p.busyGroup);
+                LOG_TRACE("[copanims] pose displaced by group 0x%02X", p.busyGroup);
 
             if (p.ours || st.stream || (isPlayer && gStreamHeld))
             {
@@ -1306,7 +1306,7 @@ namespace
             // is what says which group the player is actually animating from.
             if (gTrace && isPlayer && gate != lastGate)
             {
-                TACE_TRACE("[copanims] pose off - %s (moveset 0x%02X)", gate, moveset);
+                LOG_TRACE("[copanims] pose off - %s (moveset 0x%02X)", gate, moveset);
                 TracePlaying(ped);
             }
             if (isPlayer)
@@ -1364,8 +1364,8 @@ namespace
         {
             st.rpgPoseUp = PlayPose(blender, gRpgPose) != nullptr;
             if (gTrace)
-                TACE_TRACE("[copanims] launcher pose %s: %s", gRpgPose.text.c_str(),
-                           st.rpgPoseUp ? "started" : "FAILED - dictionary not ready?");
+                LOG_TRACE("[copanims] launcher pose %s: %s", gRpgPose.text.c_str(),
+                          st.rpgPoseUp ? "started" : "FAILED - dictionary not ready?");
         }
         else
         {
@@ -1378,18 +1378,18 @@ namespace
         if (isPlayer && !reported)
         {
             reported = true;
-            TACE_OK("[copanims] player is using the cop weapon animations "
-                    "(group 0x%02X, first pose id %d)", group, anim);
+            LOG_OK("[copanims] player is using the cop weapon animations "
+                   "(group 0x%02X, first pose id %d)", group, anim);
         }
         else if (!isPlayer && !reportedPeds)
         {
             reportedPeds = true;
-            TACE_OK("[copanims] NPCs are using the cop weapon animations too");
+            LOG_OK("[copanims] NPCs are using the cop weapon animations too");
         }
         else if (gTrace && isPlayer)
         {
-            TACE_TRACE("[copanims] pose on - id %d (moveset 0x%02X, move anim %d, %s)",
-                       anim, moveset, p.moveAnim, GaitName(gait));
+            LOG_TRACE("[copanims] pose on - id %d (moveset 0x%02X, move anim %d, %s)",
+                      anim, moveset, p.moveAnim, GaitName(gait));
         }
     }
 
@@ -1494,32 +1494,32 @@ extern "C" int __cdecl CopAnims_MoveGroup(void *ped, int group)
 
 void CopAnims_Init()
 {
-    if (!TaceIniBool("COPANIMS", "Enabled", true))
+    if (!IniBool("COPANIMS", "Enabled", true))
         return;
 
-    gTrace           = TaceTraceEnabled("copanims");
-    gKeepWalkstyle   = TaceIniBool("COPANIMS", "KeepWalkstyle", true);
-    gPartial         = TaceIniBool("COPANIMS", "Partial", true);
-    gOnlyWhileMoving  = TaceIniBool("COPANIMS", "OnlyWhileMoving", true);
-    gStopWhenBusy     = TaceIniBool("COPANIMS", "StopWhenBusy", true);
-    gStopWhenScripted = TaceIniBool("COPANIMS", "StopWhenScripted", true);
-    gIncludeCrouch    = TaceIniBool("COPANIMS", "IncludeCrouch", true);
-    gOneHanded        = TaceIniBool("COPANIMS", "OneHanded", true);
-    gRpg              = TaceIniBool("COPANIMS", "Rpg", true);
-    gPeds             = TaceIniBool("COPANIMS", "Peds", true);
-    gRpgPose.text     = TaceIniString("COPANIMS", "RpgPose", "SWAT_RIFLE");
-    gToggleKey        = ParseKey(TaceIniString("COPANIMS", "ToggleKey"));
+    gTrace           = TraceEnabled("copanims");
+    gKeepWalkstyle   = IniBool("COPANIMS", "KeepWalkstyle", true);
+    gPartial         = IniBool("COPANIMS", "Partial", true);
+    gOnlyWhileMoving  = IniBool("COPANIMS", "OnlyWhileMoving", true);
+    gStopWhenBusy     = IniBool("COPANIMS", "StopWhenBusy", true);
+    gStopWhenScripted = IniBool("COPANIMS", "StopWhenScripted", true);
+    gIncludeCrouch    = IniBool("COPANIMS", "IncludeCrouch", true);
+    gOneHanded        = IniBool("COPANIMS", "OneHanded", true);
+    gRpg              = IniBool("COPANIMS", "Rpg", true);
+    gPeds             = IniBool("COPANIMS", "Peds", true);
+    gRpgPose.text     = IniString("COPANIMS", "RpgPose", "SWAT_RIFLE");
+    gToggleKey        = ParseKey(IniString("COPANIMS", "ToggleKey"));
     {
         gPistolPose = ReadPose("PistolPose", "B");
 
         // PistolPoseRunning covered jogging and sprinting together before they
         // were split, so it still stands as the default for both.
-        const std::string both = TaceIniString("COPANIMS", "PistolPoseRunning", "A");
+        const std::string both = IniString("COPANIMS", "PistolPoseRunning", "A");
         gPistolPoseJog    = ReadPose("PistolPoseJogging",   both.c_str());
         gPistolPoseSprint = ReadPose("PistolPoseSprinting", both.c_str());
     }
-    gStartDelayMs     = TaceIniInt("COPANIMS", "StartDelay", 80);
-    gRetryDelayMs     = TaceIniInt("COPANIMS", "RetryDelay", 250);
+    gStartDelayMs     = IniInt("COPANIMS", "StartDelay", 80);
+    gRetryDelayMs     = IniInt("COPANIMS", "RetryDelay", 250);
     if (gStartDelayMs < 0)    gStartDelayMs = 0;
     if (gStartDelayMs > 2000) gStartDelayMs = 2000;
     if (gRetryDelayMs < 0)    gRetryDelayMs = 0;
@@ -1528,7 +1528,7 @@ void CopAnims_Init()
     // Written in hundredths so the ini stays whole numbers, same as
     // [COVERANIM] CutAt.
     {
-        int blend = TaceIniInt("COPANIMS", "Blend", 400);
+        int blend = IniInt("COPANIMS", "Blend", 400);
         if (blend < 25)   blend = 25;
         if (blend > 2000) blend = 2000;
         gBlend = static_cast<float>(blend) / 100.0f;
@@ -1537,7 +1537,7 @@ void CopAnims_Init()
     hook::pattern pattern = find_pattern(kPlayerPedSig);
     if (pattern.empty())
     {
-        TACE_WARN("[copanims] player ped accessor: signature not found - not applied");
+        LOG_WARN("[copanims] player ped accessor: signature not found - not applied");
         return;
     }
     gLocalPlayer = *pattern.get_first<int *>(kLocalPlayerOperand);
@@ -1547,8 +1547,8 @@ void CopAnims_Init()
     pattern = find_pattern(kDefaultGroupSig);
     if (pattern.empty())
     {
-        TACE_WARN("[copanims] CPedMoveBlend::setDefaultAnimGroup: signature not found - "
-                  "not applied");
+        LOG_WARN("[copanims] CPedMoveBlend::setDefaultAnimGroup: signature not found - "
+                 "not applied");
         return;
     }
     gPedOnBlend       = *pattern.get_first<uint8_t>(kPedOnBlendOperand);
@@ -1556,16 +1556,16 @@ void CopAnims_Init()
     gMoveGroupOnBlend = *pattern.get_first<uint8_t>(kMoveGrpOperand);
 
     if (gTrace)
-        TACE_TRACE("[copanims] ped+0x%X on the move blend, m_nDefaultAnimGroup at ped+0x%X",
-                   gPedOnBlend, gDefaultGroup);
+        LOG_TRACE("[copanims] ped+0x%X on the move blend, m_nDefaultAnimGroup at ped+0x%X",
+                  gPedOnBlend, gDefaultGroup);
 
     if (gKeepWalkstyle)
     {
         pattern = find_pattern(kSetAnimGroupSig);
         if (pattern.empty())
         {
-            TACE_WARN("[copanims] CPedMoveBlend::setMoveAnimGroup: signature not found - "
-                      "the walkstyle will stay vanilla");
+            LOG_WARN("[copanims] CPedMoveBlend::setMoveAnimGroup: signature not found - "
+                     "the walkstyle will stay vanilla");
             gKeepWalkstyle = false;
         }
         else
@@ -1580,8 +1580,8 @@ void CopAnims_Init()
                 hook::pattern sites(site.sig);
                 if (sites.empty())
                 {
-                    TACE_WARN("[copanims] setMoveAnimGroup call site (%s): signature not found "
-                              "- the walkstyle may stay vanilla in that stance", site.what);
+                    LOG_WARN("[copanims] setMoveAnimGroup call site (%s): signature not found "
+                             "- the walkstyle may stay vanilla in that stance", site.what);
                     missing++;
                     continue;
                 }
@@ -1598,9 +1598,9 @@ void CopAnims_Init()
                     const void *target = at + 5 + *reinterpret_cast<int32_t *>(at + 1);
                     if (*at != 0xE8 || target != gSetAnimGroup)
                     {
-                        TACE_WARN("[copanims] setMoveAnimGroup call site (%s): match %zu is not "
-                                  "a call to setMoveAnimGroup (%02X -> %p) - left alone",
-                                  site.what, i, *at, target);
+                        LOG_WARN("[copanims] setMoveAnimGroup call site (%s): match %zu is not "
+                                 "a call to setMoveAnimGroup (%02X -> %p) - left alone",
+                                 site.what, i, *at, target);
                         missing++;
                         continue;
                     }
@@ -1609,14 +1609,14 @@ void CopAnims_Init()
                 }
 
                 if (gTrace)
-                    TACE_TRACE("[copanims] setMoveAnimGroup call site (%s): %zu match(es)",
-                               site.what, count);
+                    LOG_TRACE("[copanims] setMoveAnimGroup call site (%s): %zu match(es)",
+                              site.what, count);
             }
             if (missing)
-                TACE_WARN("[copanims] %d call site(s) could not be hooked - the walkstyle will "
-                          "stay vanilla in some stances", missing);
+                LOG_WARN("[copanims] %d call site(s) could not be hooked - the walkstyle will "
+                         "stay vanilla in some stances", missing);
             else
-                TACE_OK("[copanims] %d setMoveAnimGroup call site(s) hooked", hooked);
+                LOG_OK("[copanims] %d setMoveAnimGroup call site(s) hooked", hooked);
         }
     }
 
@@ -1625,8 +1625,8 @@ void CopAnims_Init()
         pattern = find_pattern(kChooseAnimSig);
         if (pattern.empty())
         {
-            TACE_WARN("[copanims] chooseUpperCombatAnim: signature not found - "
-                      "no partial animation");
+            LOG_WARN("[copanims] chooseUpperCombatAnim: signature not found - "
+                     "no partial animation");
             gPartial = false;
         }
         else
@@ -1640,8 +1640,8 @@ void CopAnims_Init()
         pattern = find_pattern(kPlayAnimSig);
         if (pattern.empty())
         {
-            TACE_WARN("[copanims] CAnimBlender::playAnim: signature not found - "
-                      "no partial animation");
+            LOG_WARN("[copanims] CAnimBlender::playAnim: signature not found - "
+                     "no partial animation");
             gPartial = false;
         }
         else
@@ -1655,8 +1655,8 @@ void CopAnims_Init()
         pattern = find_pattern(kAnimReqSig);
         if (pattern.empty())
         {
-            TACE_WARN("[copanims] anim group streaming request: signature not found - "
-                      "no partial animation");
+            LOG_WARN("[copanims] anim group streaming request: signature not found - "
+                     "no partial animation");
             gPartial = false;
         }
         else
@@ -1672,8 +1672,8 @@ void CopAnims_Init()
         pattern = find_pattern(kPedUpdateSig);
         if (pattern.empty())
         {
-            TACE_WARN("[copanims] per-frame ped update: signature not found - "
-                      "no partial animation and no toggle key");
+            LOG_WARN("[copanims] per-frame ped update: signature not found - "
+                     "no partial animation and no toggle key");
             gPartial = false;
         }
         else
@@ -1689,8 +1689,8 @@ void CopAnims_Init()
     {
         pattern = find_pattern(kAnimGroupsSig);
         if (pattern.empty())
-            TACE_WARN("[copanims] anim group array: signature not found - the pistol pose will "
-                      "not follow the player's pace");
+            LOG_WARN("[copanims] anim group array: signature not found - the pistol pose will "
+                     "not follow the player's pace");
         else
             gAnimGroups = *pattern.get_first<uint8_t **>(kAnimGroupsOperand);
     }
@@ -1708,12 +1708,12 @@ void CopAnims_Init()
         if (!pattern.empty())
             gGroupByName = reinterpret_cast<GroupByNameFn>(pattern.get_first(0));
         else
-            TACE_WARN("[copanims] animation set lookup: signature not found - RpgPose can "
-                      "only name an animation inside gun@cops");
+            LOG_WARN("[copanims] animation set lookup: signature not found - RpgPose can "
+                     "only name an animation inside gun@cops");
         if (!gWeaponSlot || !gWeaponInfo)
         {
-            TACE_WARN("[copanims] weapon info accessors: signature not found - "
-                      "no launcher pose");
+            LOG_WARN("[copanims] weapon info accessors: signature not found - "
+                     "no launcher pose");
             gRpg = false;
         }
     }
@@ -1735,13 +1735,13 @@ void CopAnims_Init()
             else if (get && get[0] == 0xB0)
                 gScriptTask = get[1];
             else
-                TACE_WARN("[copanims] CTaskSimpleRunNamedAnim::GetTaskType is not the "
-                          "constant getter it should be - scripted animations not detected");
+                LOG_WARN("[copanims] CTaskSimpleRunNamedAnim::GetTaskType is not the "
+                         "constant getter it should be - scripted animations not detected");
         }
         else
         {
-            TACE_WARN("[copanims] CTaskSimpleRunNamedAnim: signature not found - scripted "
-                      "animations not detected");
+            LOG_WARN("[copanims] CTaskSimpleRunNamedAnim: signature not found - scripted "
+                     "animations not detected");
         }
 
         pattern = find_pattern(kFindPrimaryOrMoveSig);
@@ -1763,21 +1763,21 @@ void CopAnims_Init()
                     gPedIntel = *sites.get(i).get<uint32_t>(kPedIntelOperand);
             }
             if (!gPedIntel)
-                TACE_WARN("[copanims] CPed::m_pPedIntelligence: no call site found - scripted "
-                          "animations not detected");
+                LOG_WARN("[copanims] CPed::m_pPedIntelligence: no call site found - scripted "
+                         "animations not detected");
         }
         else
         {
-            TACE_WARN("[copanims] CPedIntelligence::findPrimaryOrMoveSubTaskByID: signature "
-                      "not found - scripted animations not detected");
+            LOG_WARN("[copanims] CPedIntelligence::findPrimaryOrMoveSubTaskByID: signature "
+                     "not found - scripted animations not detected");
         }
 
         pattern = find_pattern(kFindSubTaskSig);
         if (!pattern.empty())
             gFindSubTask = reinterpret_cast<FindSubTaskFn>(pattern.get_first(0));
         else
-            TACE_WARN("[copanims] CTaskManager::findPrimarySubTaskByID: signature not found - "
-                      "a scripted animation in a secondary task slot will not be seen");
+            LOG_WARN("[copanims] CTaskManager::findPrimarySubTaskByID: signature not found - "
+                     "a scripted animation in a secondary task slot will not be seen");
 
         if (gScriptTask < 0 || !gPedIntel || !gFindTask)
         {
@@ -1785,8 +1785,8 @@ void CopAnims_Init()
         }
         else if (gTrace)
         {
-            TACE_TRACE("[copanims] CTaskSimpleRunNamedAnim is task type 0x%X; intelligence at "
-                       "ped+0x%X, tasks at +0x%X", gScriptTask, gPedIntel, gTaskMgr);
+            LOG_TRACE("[copanims] CTaskSimpleRunNamedAnim is task type 0x%X; intelligence at "
+                      "ped+0x%X, tasks at +0x%X", gScriptTask, gPedIntel, gTaskMgr);
         }
     }
 
@@ -1795,31 +1795,31 @@ void CopAnims_Init()
     {
         pattern = find_pattern(kSetBlendSig);
         if (pattern.empty())
-            TACE_WARN("[copanims] CAnimPlayer::setBlend: signature not found - the pose will "
-                      "play out instead of being blended away");
+            LOG_WARN("[copanims] CAnimPlayer::setBlend: signature not found - the pose will "
+                     "play out instead of being blended away");
         else
             gSetBlend = reinterpret_cast<SetBlendFn>(pattern.get_first(0));
     }
 
     if (!gKeepWalkstyle && !gPartial)
     {
-        TACE_WARN("[copanims] enabled, but neither half could be applied");
+        LOG_WARN("[copanims] enabled, but neither half could be applied");
         return;
     }
 
-    TACE_INFO("[copanims] walkstyle kept: %s, partial gun animation: %s, rocket launchers: %s, "
-              "NPCs: %s",
-              gKeepWalkstyle ? "yes" : "no", gPartial ? "yes" : "no", gRpg ? "yes" : "no",
-              gPeds ? "yes" : "no");
+    LOG_INFO("[copanims] walkstyle kept: %s, partial gun animation: %s, rocket launchers: %s, "
+             "NPCs: %s",
+             gKeepWalkstyle ? "yes" : "no", gPartial ? "yes" : "no", gRpg ? "yes" : "no",
+             gPeds ? "yes" : "no");
     if (gToggleKey)
-        TACE_INFO("[copanims] toggle in game with %s",
-                  TaceIniString("COPANIMS", "ToggleKey").c_str());
+        LOG_INFO("[copanims] toggle in game with %s",
+                 IniString("COPANIMS", "ToggleKey").c_str());
     if (gPartial)
-        TACE_INFO("[copanims] pose held only while: on a moveset %s, nothing else "
-                  "animating %s, no scripted animation %s (crouch %s)",
-                  gOnlyWhileMoving ? "yes" : "no", gStopWhenBusy ? "yes" : "no",
-                  gStopWhenScripted ? "yes" : "no",
-                  gIncludeCrouch ? "counts" : "excluded");
+        LOG_INFO("[copanims] pose held only while: on a moveset %s, nothing else "
+                 "animating %s, no scripted animation %s (crouch %s)",
+                 gOnlyWhileMoving ? "yes" : "no", gStopWhenBusy ? "yes" : "no",
+                 gStopWhenScripted ? "yes" : "no",
+                 gIncludeCrouch ? "counts" : "excluded");
     if (gPartial && gOneHanded)
     {
         auto poseName = [](int a) {
@@ -1828,7 +1828,7 @@ void CopAnims_Init()
                  : a == kPoseNone    ? "no cop carry - vanilla"
                                      : "whichever pose the engine picks";
         };
-        TACE_INFO("[copanims] one-handed: %s standing or walking, %s jogging, %s sprinting",
-                  poseName(gPistolPose), poseName(gPistolPoseJog), poseName(gPistolPoseSprint));
+        LOG_INFO("[copanims] one-handed: %s standing or walking, %s jogging, %s sprinting",
+                 poseName(gPistolPose), poseName(gPistolPoseJog), poseName(gPistolPoseSprint));
     }
 }

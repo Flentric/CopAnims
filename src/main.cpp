@@ -13,10 +13,8 @@
 // a signature that does not match reports itself in CopAnims.log and that
 // half of the feature stays vanilla.
 //
-// This is the same code that ships inside TACE-Patch as [COPANIMS], lifted
-// out with one change: there it borrowed TACE-Patch's own hook on
-// CPedMoveBlend::setMoveAnimGroup for the three standing call sites and only
-// installed the ducked ones itself. Standing on its own it installs all six.
+// It hooks all six CPedMoveBlend::setMoveAnimGroup call sites itself - the
+// three standing ones and the three ducked ones.
 // ============================================================================
 
 void CopAnims_Init();
@@ -25,9 +23,9 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
-        TaceLog_Init();
+        Log_Init();
         CopAnims_Init();
-        TaceLog_Summary();
+        Log_Summary();
     }
     return TRUE;
 }

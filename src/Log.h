@@ -24,21 +24,21 @@
 // The console is opt-in ([DEBUG] Console = 1); with it off only the file is
 // written.
 
-enum TaceLogLevel
+enum LogLevel
 {
-    kTaceTrace = 0,   // per-event spam: one line per ped, per sound, per roll
-    kTaceInfo,        // ordinary progress
-    kTaceGood,        // something was successfully changed
-    kTaceWarn,        // skipped, clamped, ignored - the mod still runs
-    kTaceError,       // a feature could not be applied at all
-    kTaceLevelCount
+    kLogTrace = 0,   // per-event spam: one line per ped, per sound, per roll
+    kLogInfo,        // ordinary progress
+    kLogGood,        // something was successfully changed
+    kLogWarn,        // skipped, clamped, ignored - the mod still runs
+    kLogError,       // a feature could not be applied at all
+    kLogLevelCount
 };
 
 // ---------------------------------------------------------------------------
 // state
 // ---------------------------------------------------------------------------
 
-struct TaceLogState
+struct LogState
 {
     bool             ready       = false;
     bool             configured  = false;
@@ -49,29 +49,29 @@ struct TaceLogState
     bool             vt          = false;   // console understands ANSI colour
     bool             colours     = true;
     bool             timestamps  = true;
-    int              minLevel    = kTaceInfo;
+    int              minLevel    = kLogInfo;
     bool             unlimited   = false;   // lift the per-feature trace budgets
 
     ULONGLONG        start       = 0;
     char             lastLine[512]{};
     int              repeat      = 0;
-    int              counts[kTaceLevelCount]{};
+    int              counts[kLogLevelCount]{};
 };
 
-inline TaceLogState &TaceLogState_()
+inline LogState &LogState_()
 {
-    static TaceLogState s;
+    static LogState s;
     return s;
 }
 
-inline const std::string &TaceLogPath()
+inline const std::string &LogPath()
 {
     static const std::string path = []
     {
         char buf[MAX_PATH]{};
         HMODULE module = nullptr;
         GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCSTR>(&TaceLogPath), &module);
+                           reinterpret_cast<LPCSTR>(&LogPath), &module);
         GetModuleFileNameA(module, buf, MAX_PATH);
 
         std::string p = buf;
@@ -90,12 +90,12 @@ inline const std::string &TaceLogPath()
 // Ctrl+C, Ctrl+Break and the window's close button all terminate the *host
 // process* by default - they would take the game down with them. Swallow every
 // one; this console is a viewer, not a controller.
-inline BOOL WINAPI TaceConsoleCtrlHandler(DWORD)
+inline BOOL WINAPI ConsoleCtrlHandler(DWORD)
 {
     return TRUE;
 }
 
-inline void TaceConsoleOpen(TaceLogState &s)
+inline void ConsoleOpen(LogState &s)
 {
     // ERROR_ACCESS_DENIED just means the process already owns a console
     // (a loader that made one, or a second .asi that got here first).
@@ -109,7 +109,7 @@ inline void TaceConsoleOpen(TaceLogState &s)
         return;
 
     SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCtrlHandler(TaceConsoleCtrlHandler, TRUE);
+    SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
 
     DWORD mode = 0;
     if (GetConsoleMode(s.console, &mode))
@@ -129,12 +129,12 @@ inline void TaceConsoleOpen(TaceLogState &s)
         CloseHandle(in);
     }
 
-    const std::string title = TaceIniString("DEBUG", "ConsoleTitle", "TacePatch");
+    const std::string title = IniString("DEBUG", "ConsoleTitle", "CopAnims");
     SetConsoleTitleA(title.empty() ? "CopAnims" : title.c_str());
 
-    const SHORT cols       = static_cast<SHORT>(TaceIniInt("DEBUG", "ConsoleColumns", 132));
-    const SHORT rows       = static_cast<SHORT>(TaceIniInt("DEBUG", "ConsoleRows", 44));
-    const SHORT scrollback = static_cast<SHORT>(TaceIniInt("DEBUG", "ConsoleScrollback", 9000));
+    const SHORT cols       = static_cast<SHORT>(IniInt("DEBUG", "ConsoleColumns", 132));
+    const SHORT rows       = static_cast<SHORT>(IniInt("DEBUG", "ConsoleRows", 44));
+    const SHORT scrollback = static_cast<SHORT>(IniInt("DEBUG", "ConsoleScrollback", 9000));
 
     // Shrink the window before resizing the buffer: the buffer may never be
     // smaller than the window, so doing these in the other order fails silently.
@@ -157,7 +157,7 @@ inline void TaceConsoleOpen(TaceLogState &s)
 
         // "ConsolePos = 2560,0" throws it onto the second monitor. Blank leaves
         // it wherever Windows put it.
-        const std::string pos = TaceIniString("DEBUG", "ConsolePos", "");
+        const std::string pos = IniString("DEBUG", "ConsolePos", "");
         if (!pos.empty())
         {
             int x = 0, y = 0;
@@ -171,33 +171,33 @@ inline void TaceConsoleOpen(TaceLogState &s)
 // colour
 // ---------------------------------------------------------------------------
 
-inline const char *TaceLevelColour(int level)
+inline const char *LevelColour(int level)
 {
     switch (level)
     {
-    case kTaceTrace: return "\x1b[38;5;244m";
-    case kTaceGood:  return "\x1b[38;5;114m";
-    case kTaceWarn:  return "\x1b[38;5;214m";
-    case kTaceError: return "\x1b[38;5;203m";
+    case kLogTrace: return "\x1b[38;5;244m";
+    case kLogGood:  return "\x1b[38;5;114m";
+    case kLogWarn:  return "\x1b[38;5;214m";
+    case kLogError: return "\x1b[38;5;203m";
     default:         return "\x1b[38;5;252m";
     }
 }
 
-inline const char *TaceLevelMark(int level)
+inline const char *LevelMark(int level)
 {
     switch (level)
     {
-    case kTaceTrace: return "  ";
-    case kTaceGood:  return "+ ";
-    case kTaceWarn:  return "! ";
-    case kTaceError: return "x ";
+    case kLogTrace: return "  ";
+    case kLogGood:  return "+ ";
+    case kLogWarn:  return "! ";
+    case kLogError: return "x ";
     default:         return "- ";
     }
 }
 
 // One stable colour per subsystem tag, so [gangs] is always the same shade and
 // the eye can filter the stream without reading it.
-inline const char *TaceTagColour(const char *tag, size_t len)
+inline const char *TagColour(const char *tag, size_t len)
 {
     static const char *kPalette[] = {
         "\x1b[38;5;81m",   // cyan
@@ -215,9 +215,9 @@ inline const char *TaceTagColour(const char *tag, size_t len)
 
 // Severity for the call sites that predate the levels. The wording in this
 // codebase is consistent enough to classify on, and a wrong guess only costs a
-// colour - the text is identical either way. New code should use TACE_OK /
-// TACE_WARN / TACE_ERR / TACE_TRACE rather than rely on this.
-inline int TaceGuessLevel(const char *msg)
+// colour - the text is identical either way. New code should use LOG_OK /
+// LOG_WARN / LOG_ERR / LOG_TRACE rather than rely on this.
+inline int GuessLevel(const char *msg)
 {
     static const char *kError[] = {"ABORTED", "not found", "feature disabled", "cannot", "failed"};
     static const char *kWarn[]  = {"SKIPPED", "skipped", "not patched", "ignored", "clamping",
@@ -226,35 +226,35 @@ inline int TaceGuessLevel(const char *msg)
 
     for (const char *k : kError)
         if (strstr(msg, k))
-            return kTaceError;
+            return kLogError;
     for (const char *k : kWarn)
         if (strstr(msg, k))
-            return kTaceWarn;
+            return kLogWarn;
     for (const char *k : kGood)
         if (strstr(msg, k))
-            return kTaceGood;
-    return kTaceInfo;
+            return kLogGood;
+    return kLogInfo;
 }
 
 // ---------------------------------------------------------------------------
 // core
 // ---------------------------------------------------------------------------
 
-// Falls back to plain append-to-file if TaceLog_Init() never ran, so a stray
+// Falls back to plain append-to-file if Log_Init() never ran, so a stray
 // early call still records something instead of crashing on a null lock.
-inline void TaceLogEnsure(TaceLogState &s)
+inline void LogEnsure(LogState &s)
 {
     if (s.ready)
         return;
     InitializeCriticalSection(&s.lock);
     s.start = GetTickCount64();
-    s.file  = fopen(TaceLogPath().c_str(), "a");
+    s.file  = fopen(LogPath().c_str(), "a");
     s.ready = true;
 }
 
 // Emits the "^ repeated N more times" line that closes a collapsed run. The
 // console shows the count live on one line; the file only learns of it here.
-inline void TaceFlushRepeat(TaceLogState &s)
+inline void FlushRepeat(LogState &s)
 {
     if (s.repeat <= 0)
         return;
@@ -266,10 +266,10 @@ inline void TaceFlushRepeat(TaceLogState &s)
     s.repeat = 0;
 }
 
-inline void TaceLogWriteV(int level, const char *fmt, va_list args)
+inline void LogWriteV(int level, const char *fmt, va_list args)
 {
-    TaceLogState &s = TaceLogState_();
-    TaceLogEnsure(s);
+    LogState &s = LogState_();
+    LogEnsure(s);
 
     if (level < s.minLevel)
         return;
@@ -280,7 +280,7 @@ inline void TaceLogWriteV(int level, const char *fmt, va_list args)
 
     EnterCriticalSection(&s.lock);
 
-    if (level >= 0 && level < kTaceLevelCount)
+    if (level >= 0 && level < kLogLevelCount)
         s.counts[level]++;
 
     const double secs = (GetTickCount64() - s.start) / 1000.0;
@@ -324,13 +324,13 @@ inline void TaceLogWriteV(int level, const char *fmt, va_list args)
             snprintf(line, sizeof(line), "%s\x1b[38;5;240m%8.3f  %s%-9s %s%s%s\x1b[38;5;240m%s\x1b[0m\x1b[K\n",
                      same ? "\x1b[A\r" : "",
                      secs,
-                     tag ? TaceTagColour(tag, tagLen) : "", tagBuf,
-                     TaceLevelColour(level), TaceLevelMark(level), body,
+                     tag ? TagColour(tag, tagLen) : "", tagBuf,
+                     LevelColour(level), LevelMark(level), body,
                      count);
         else
             snprintf(line, sizeof(line), "%s%8.3f  %-9s %s%s%s\n",
                      same ? "\r" : "",
-                     secs, tagBuf, TaceLevelMark(level), body, count);
+                     secs, tagBuf, LevelMark(level), body, count);
 
         DWORD written = 0;
         WriteConsoleA(s.console, line, static_cast<DWORD>(strlen(line)), &written, nullptr);
@@ -344,7 +344,7 @@ inline void TaceLogWriteV(int level, const char *fmt, va_list args)
 
     if (!collapsed)
     {
-        TaceFlushRepeat(s);
+        FlushRepeat(s);
         strncpy(s.lastLine, msg, sizeof(s.lastLine) - 1);
         s.lastLine[sizeof(s.lastLine) - 1] = '\0';
 
@@ -352,7 +352,7 @@ inline void TaceLogWriteV(int level, const char *fmt, va_list args)
         if (s.file)
         {
             if (s.timestamps)
-                fprintf(s.file, "[%8.3f] %s%s\n", secs, TaceLevelMark(level), msg);
+                fprintf(s.file, "[%8.3f] %s%s\n", secs, LevelMark(level), msg);
             else
                 fprintf(s.file, "%s\n", msg);
             fflush(s.file);   // the next line may be the last one before a crash
@@ -362,17 +362,17 @@ inline void TaceLogWriteV(int level, const char *fmt, va_list args)
     LeaveCriticalSection(&s.lock);
 }
 
-inline void TaceLogAt(int level, const char *fmt, ...)
+inline void LogAt(int level, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    TaceLogWriteV(level, fmt, args);
+    LogWriteV(level, fmt, args);
     va_end(args);
 }
 
 // Unchanged signature, so every existing call site keeps working; the severity
 // is inferred from the wording.
-inline void TaceLog(const char *fmt, ...)
+inline void LogAuto(const char *fmt, ...)
 {
     char peek[1024];
     va_list probe;
@@ -382,32 +382,32 @@ inline void TaceLog(const char *fmt, ...)
 
     va_list args;
     va_start(args, fmt);
-    TaceLogWriteV(TaceGuessLevel(peek), fmt, args);
+    LogWriteV(GuessLevel(peek), fmt, args);
     va_end(args);
 }
 
-#define TACE_TRACE(...) TaceLogAt(kTaceTrace, __VA_ARGS__)
-#define TACE_INFO(...)  TaceLogAt(kTaceInfo,  __VA_ARGS__)
-#define TACE_OK(...)    TaceLogAt(kTaceGood,  __VA_ARGS__)
-#define TACE_WARN(...)  TaceLogAt(kTaceWarn,  __VA_ARGS__)
-#define TACE_ERR(...)   TaceLogAt(kTaceError, __VA_ARGS__)
+#define LOG_TRACE(...) LogAt(kLogTrace, __VA_ARGS__)
+#define LOG_INFO(...)  LogAt(kLogInfo,  __VA_ARGS__)
+#define LOG_OK(...)    LogAt(kLogGood,  __VA_ARGS__)
+#define LOG_WARN(...)  LogAt(kLogWarn,  __VA_ARGS__)
+#define LOG_ERR(...)   LogAt(kLogError, __VA_ARGS__)
 
 // ---------------------------------------------------------------------------
 // lifecycle
 // ---------------------------------------------------------------------------
 
 // Call once, first thing in DllMain, before any feature initialises.
-inline void TaceLog_Init()
+inline void Log_Init()
 {
-    TaceLogState &s = TaceLogState_();
+    LogState &s = LogState_();
     if (s.configured)
         return;
 
     // The ini is read before the file is opened - AppendLog decides whether
     // this run starts a fresh one.
-    const bool wantFile    = TaceIniBool("DEBUG", "LogFile", true);
-    const bool append      = TaceIniBool("DEBUG", "AppendLog", false);
-    const bool wantConsole = TaceIniBool("DEBUG", "Console", false);
+    const bool wantFile    = IniBool("DEBUG", "LogFile", true);
+    const bool append      = IniBool("DEBUG", "AppendLog", false);
+    const bool wantConsole = IniBool("DEBUG", "Console", false);
 
     if (!s.ready)
     {
@@ -421,56 +421,56 @@ inline void TaceLog_Init()
         s.file = nullptr;
     }
     if (wantFile)
-        s.file = fopen(TaceLogPath().c_str(), append ? "a" : "w");
+        s.file = fopen(LogPath().c_str(), append ? "a" : "w");
 
-    s.colours    = TaceIniBool("DEBUG", "ConsoleColours", true);
-    s.timestamps = TaceIniBool("DEBUG", "Timestamps", true);
-    s.unlimited  = TaceIniBool("DEBUG", "UnlimitedTrace", false);
+    s.colours    = IniBool("DEBUG", "ConsoleColours", true);
+    s.timestamps = IniBool("DEBUG", "Timestamps", true);
+    s.unlimited  = IniBool("DEBUG", "UnlimitedTrace", false);
     s.configured = true;
 
     // Default is trace, i.e. no filtering: the per-feature Debug keys already
     // decide whether the noisy per-event lines are produced at all. Level is
     // here to turn a busy run down to just the outcomes.
-    const std::string level = TaceIniString("DEBUG", "Level", "trace");
-    if      (level == "error")           s.minLevel = kTaceError;
-    else if (level == "warn")            s.minLevel = kTaceWarn;
-    else if (level == "info")            s.minLevel = kTaceInfo;
-    else                                 s.minLevel = kTaceTrace;
+    const std::string level = IniString("DEBUG", "Level", "trace");
+    if      (level == "error")           s.minLevel = kLogError;
+    else if (level == "warn")            s.minLevel = kLogWarn;
+    else if (level == "info")            s.minLevel = kLogInfo;
+    else                                 s.minLevel = kLogTrace;
 
     if (wantConsole)
-        TaceConsoleOpen(s);
+        ConsoleOpen(s);
 
     SYSTEMTIME t{};
     GetLocalTime(&t);
     char exe[MAX_PATH]{};
     GetModuleFileNameA(nullptr, exe, MAX_PATH);
 
-    TACE_INFO("[copanims] ===========================================================");
-    TACE_INFO("[copanims] CopAnims  -  %04d-%02d-%02d %02d:%02d:%02d",
-              t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-    TACE_INFO("[copanims] host %s", exe);
-    TACE_INFO("[copanims] GTAIV.exe base %p (ASLR - add this to any 1.0.8.0 VA)",
-              (void *)GetModuleHandleA(nullptr));
+    LOG_INFO("[copanims] ===========================================================");
+    LOG_INFO("[copanims] CopAnims  -  %04d-%02d-%02d %02d:%02d:%02d",
+             t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    LOG_INFO("[copanims] host %s", exe);
+    LOG_INFO("[copanims] GTAIV.exe base %p (ASLR - add this to any 1.0.8.0 VA)",
+             (void *)GetModuleHandleA(nullptr));
     if (s.console != INVALID_HANDLE_VALUE)
-        TACE_INFO("[copanims] console attached%s, level %s", s.vt ? ", colour" : "", level.c_str());
-    TACE_INFO("[copanims] ===========================================================");
+        LOG_INFO("[copanims] console attached%s, level %s", s.vt ? ", colour" : "", level.c_str());
+    LOG_INFO("[copanims] ===========================================================");
 }
 
 // Call once after every feature has initialised. Answers "did any of this
 // actually take?" at a glance instead of by reading sixty lines.
-inline void TaceLog_Summary()
+inline void Log_Summary()
 {
-    TaceLogState &s = TaceLogState_();
-    TaceLogEnsure(s);
+    LogState &s = LogState_();
+    LogEnsure(s);
 
     EnterCriticalSection(&s.lock);
-    TaceFlushRepeat(s);
-    const int good = s.counts[kTaceGood], warn = s.counts[kTaceWarn], err = s.counts[kTaceError];
+    FlushRepeat(s);
+    const int good = s.counts[kLogGood], warn = s.counts[kLogWarn], err = s.counts[kLogError];
     LeaveCriticalSection(&s.lock);
 
-    TaceLogAt(err ? kTaceError : (warn ? kTaceWarn : kTaceGood),
-              "[copanims] startup complete: %d change(s) applied, %d skipped, %d failed",
-              good, warn, err);
+    LogAt(err ? kLogError : (warn ? kLogWarn : kLogGood),
+          "[copanims] startup complete: %d change(s) applied, %d skipped, %d failed",
+          good, warn, err);
 
     if (s.console != INVALID_HANDLE_VALUE)
     {
@@ -483,9 +483,9 @@ inline void TaceLog_Summary()
 // Per-event tracing is capped so the log file cannot balloon over a long
 // session. A console has no such problem - it scrolls - so [DEBUG]
 // UnlimitedTrace lifts the cap for anyone watching it live.
-inline int TaceTraceBudget(int normal)
+inline int TraceBudget(int normal)
 {
-    return TaceLogState_().unlimited ? 0x7FFFFFFF : normal;
+    return LogState_().unlimited ? 0x7FFFFFFF : normal;
 }
 
 // Which subsystems emit their per-event lines, from one place:
@@ -498,11 +498,11 @@ inline int TaceTraceBudget(int normal)
 //
 // This decides whether the noisy lines are PRODUCED; [DEBUG] Level decides how
 // much of what is produced gets through to the sinks.
-inline bool TaceTraceEnabled(const char *name, const char *legacySection = nullptr)
+inline bool TraceEnabled(const char *name, const char *legacySection = nullptr)
 {
     static const std::string list = []
     {
-        std::string s = TaceIniString("DEBUG", "Trace", "");
+        std::string s = IniString("DEBUG", "Trace", "");
         for (char &c : s)
             c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
         return s;
@@ -522,10 +522,10 @@ inline bool TaceTraceEnabled(const char *name, const char *legacySection = nullp
         at = end;
     }
 
-    return legacySection != nullptr && TaceIniBool(legacySection, "Debug", false);
+    return legacySection != nullptr && IniBool(legacySection, "Debug", false);
 }
 
-inline bool TaceConsoleActive()
+inline bool ConsoleActive()
 {
-    return TaceLogState_().console != INVALID_HANDLE_VALUE;
+    return LogState_().console != INVALID_HANDLE_VALUE;
 }
