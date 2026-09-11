@@ -79,13 +79,14 @@ or streamed out.
 
 ## Install
 
-Drop `CopAnims.asi` and `CopAnims.ini` next to `GTAIV.exe`. Needs an ASI loader
-(ZolikaPatch, Ultimate ASI Loader, xliveless — whatever you already use).
+Grab `CopAnims.7z` from [Releases](https://github.com/Flentric/CopAnims/releases) and drop
+`CopAnims.asi` and `CopAnims.ini` next to `GTAIV.exe`. Needs an ASI loader (ZolikaPatch,
+Ultimate ASI Loader, xliveless — whatever you already use).
 
-Works on 1.0.7.0, 1.0.8.0, EFLC 1.1.2.0 and the Complete Edition. Nothing here is pinned to
-an address: every function and every structure offset is found by byte signature at load, so
-a build that moves one reports it in `CopAnims.log` and that half of the feature stays
-vanilla instead of crashing.
+Built and tested on GTA IV 1.0.8.0. Nothing here is pinned to an address: every function and
+every structure offset is found by byte signature at load, so on another build anything that
+doesn't match reports itself in `CopAnims.log` and that half of the feature stays vanilla
+instead of crashing.
 
 ## Settings
 
@@ -132,3 +133,7 @@ Visual Studio 2022, `Release | Win32`. Everything it needs is in `deps/`
 ([Hooking.Patterns](https://github.com/ThirteenAG/Hooking.Patterns) and
 [injector](https://github.com/thelink2012/injector)); output lands in
 `build/Release/bin/CopAnims.asi`.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The libraries in `deps/` keep their own licences.
