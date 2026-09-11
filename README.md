@@ -126,11 +126,12 @@ and judders on its own at a stand — that's a fault in the stock animation, not
 and it's why half the cops in vanilla judder standing around. `B` is the clean
 standing/walking one. `vanilla` leaves the engine's per-ped coin flip alone.
 
-## Also available inside TACE-Patch
+## If you also run TACE-Patch
 
-This is the same code that ships in [TACE-Patch](https://github.com/ClaudeIII/TACE-Patch) as
-its `[COPANIMS]` feature. **Run one or the other, not both** — if you use TACE-Patch, set its
-`[COPANIMS] Enabled = 0` before adding this .asi.
+[TACE-Patch](https://github.com/ClaudeIII/TACE-Patch) carried this code for a while as its
+`[COPANIMS]` feature. It is being taken out there in favour of this .asi, and no TACE-Patch
+release ever shipped it. If your TACE-Patch build still has a `[COPANIMS]` section, keep it at
+`Enabled = 0` — **run one or the other, not both.**
 
 ## Building
 
